@@ -1,249 +1,158 @@
 # Workforce Management & Access Control System
 
-A production-oriented full-stack Workforce Management & Access Control System built with Spring Boot and React, demonstrating secure authentication, RBAC, audited employee lifecycle management, and a structured quality strategy (unit, API, database, and end-to-end tests).
+A production-oriented full-stack workforce management application built with Spring Boot, React and MySQL, featuring JWT authentication, role-based access control, employee lifecycle management, audit logging, REST APIs and automated quality validation.
 
 ## Overview
 
-Organizations need a secure, auditable system to manage employee lifecycles, enforce role-based access, and retain an immutable audit trail. This project covers:
+This project transforms a basic CRUD system into a workforce management and access control platform for HR and administrative operations. It demonstrates application engineering, security hardening and a structured testing strategy covering unit, API, database and end-to-end validation.
 
-- JWT authentication (stateless) + BCrypt hashing
-- Role-based access (ADMIN / HR / MANAGER / EMPLOYEE)
-- Employee lifecycle: ACTIVE / INACTIVE / ON_LEAVE / TERMINATED (TERMINATED is irreversible, implemented as soft-delete)
-- Audit logging for security-relevant actions
+## Problem Statement
+
+Organizations need a secure, auditable way to manage employee records, enforce access boundaries by role, track status changes without losing history, and retain an immutable audit trail for compliance. This system addresses that with stateless authentication, server-side authorization, validated lifecycle transitions and comprehensive audit logging.
+
+## Key Features
+
+- Employee CRUD with Bean Validation and unique constraints (`employee_id`, `email`)
 - Search / filter / sort / pagination and dashboard metrics
+- Role-based access (ADMIN / HR / MANAGER / EMPLOYEE) enforced in backend
+- JWT stateless authentication with BCrypt
+- Employee lifecycle: ACTIVE / INACTIVE / ON_LEAVE / TERMINATED (TERMINATED irreversible, soft-delete)
+- Audit logging for security-relevant operations
 - Global exception handling with consistent error responses
-
-## Features
-
-- **Employee CRUD** with Bean Validation (employeeId pattern, email, required fields) + unique constraints on `employee_id` and `email`
-- **Lifecycle**: `updateEmployeeStatus` and `deleteEmployee` (soft-terminate) both enforce `TERMINATED` cannot transition; changes are audited
-- **RBAC**: `@PreAuthorize` + `SecurityFilterChain` URL rules + service-level check (e.g. only ADMIN may change roles; EMPLOYEE may GET only own record)
-- **Audit**: `LOGIN`, `FAILED_LOGIN` (null actor handled), `CREATE_EMPLOYEE`, `UPDATE_EMPLOYEE`, `ACTIVATE_EMPLOYEE`, `DEACTIVATE_EMPLOYEE`, `TERMINATE_EMPLOYEE` — description/IP stored, no passwords/tokens logged
-- **Search**: `GET /api/employees?search=&department=&role=&status=&page=&size=&sortBy=&sortDir=` (server-side)
-- **Dashboard**: `GET /api/employees/dashboard/stats` → totals by status, department distribution, recent hires
+- Dockerized stack: Frontend → Backend → MySQL
 
 ## Architecture
 
 ```
-Frontend (React 18, React Router, Bootstrap 5, Axios) --REST/JWT--> Backend (Spring Boot 3.2, Security 6, JPA)
-                                                                          |
-                                                                    MySQL 8 / H2 (test,local)
-                                                                          |
-                                                               audit_logs + employees
+Frontend (React 18, React Router, Bootstrap 5, Axios)
+        | REST / JWT (Authorization: Bearer <token>)
+Backend (Spring Boot 3.2.5, Security 6, JPA, Validation, JJWT 0.12.5)
+        | JDBC
+Database (MySQL 8 in Docker; H2 file for local, H2 mem for test)
 ```
 
-- **Backend**: `userMgmt/userMgmt` — Spring Boot 3.2.5, Java 21, Spring Security 6 (stateless, JWT filter), JJWT 0.12.5 HS256, BCrypt
-- **Frontend**: `user-frontend` — React 18, Context API auth, Axios interceptor (401 → logout), `REACT_APP_API_URL` env override, Nginx production image
-- **DB**: MySQL 8 in Docker; H2 file (`local` profile) and H2 mem (`test` profile). `spring.jpa.hibernate.ddl-auto=update` (dev) / `create-drop` (test). No Flyway.
-- **Automation**: `automation` — Cucumber 7.15 + Selenium 4.18 + WebDriverManager + JUnit Platform Suite
+- Backend: `userMgmt/userMgmt`
+- Frontend: `user-frontend` (Nginx production image)
+- Automation: `automation` (Cucumber + Selenium + WebDriverManager, JUnit Platform Suite)
 
 ## Technology Stack
 
-| Layer | Tech |
-|-------|------|
-| Backend | Spring Boot 3.2.5, Security 6, Data JPA, Validation, JJWT 0.12.5, MySQL, H2 (runtime), Lombok |
+| Layer | Technologies |
+|-------|--------------|
+| Backend | Java 21, Spring Boot 3.2.5, Spring Security 6, Spring Data JPA, Bean Validation, JJWT 0.12.5 (HS256), BCrypt, MySQL, H2 (runtime), Lombok |
 | Frontend | React 18, React Router v6, Bootstrap 5, Axios, CRA |
-| Testing | JUnit 5, Mockito, Spring Security Test, REST Assured 5.4, H2, Cucumber + Selenium + WebDriverManager |
+| Testing | JUnit 5, Mockito, Spring Security Test, REST Assured 5.4, H2, Cucumber 7.15, Selenium 4.18, WebDriverManager 5.8 |
 | Infra | Docker, Docker Compose, Nginx |
 
-## Authentication & RBAC
+## Authentication & Security
 
-- `POST /api/auth/login` → `AuthenticationManager` → `JwtUtil.generateToken(username, ROLE_*)` (claims: `role`, `sub`, `exp` from `jwt.expiration` env, default 24h). Also `POST /api/auth/register` and `GET /api/auth/me`.
-- `SecurityConfig` (`app.h2-console.enabled=false` by default, gated; `app.cors.allowed-origins` env). JWT filter before `UsernamePasswordAuthenticationFilter`, stateless session, 401 JSON entry point, `frameOptions(sameOrigin)` only when H2 enabled. `@EnableMethodSecurity` for endpoint checks.
-- CORS trims origins, allows `Authorization, Content-Type, X-Requested-With, Accept, Origin`, credentials true; avoids `*` with credentials.
+- `POST /api/auth/login` → `AuthenticationManager` → `JwtUtil.generateToken(username, ROLE_*)` with `role` claim, `sub`, `exp` (configurable via `jwt.expiration`, default 24h). Also `POST /api/auth/register` and `GET /api/auth/me`.
+- `SecurityConfig`: stateless, `SessionCreationPolicy.STATELESS`, `Csrf.disable()`, `JwtAuthenticationFilter` before `UsernamePasswordAuthenticationFilter`, 401 JSON entry point, `app.h2-console.enabled=false` by default (gated), `frameOptions(sameOrigin)` only when console enabled.
+- Passwords: BCrypt, `WRITE_ONLY` JSON, never returned or logged, `toString()` excludes password.
+- JWTs never logged; `getSigningKey()` derives 32-byte key via SHA-256 for short dev placeholders (production must use long random secret via `JWT_SECRET` env).
 
-Endpoint matrix (backend enforces; frontend hiding is not authorization):
+## Role-Based Access Control
+
+Backend is the security boundary (React hiding is not authorization):
 
 | Endpoint | Roles |
 |----------|-------|
 | `POST /api/employees` | ADMIN, HR |
 | `GET /api/employees` | ADMIN, HR, MANAGER |
-| `GET /api/employees/{id}` | ADMIN, HR, MANAGER, EMPLOYEE (EMPLOYEE only own id) |
-| `PUT /api/employees/{id}` | ADMIN, HR (role change only ADMIN) |
+| `GET /api/employees/{id}` | ADMIN, HR, MANAGER, EMPLOYEE (EMPLOYEE only own id; enforced in controller) |
+| `PUT /api/employees/{id}` | ADMIN, HR (role change only ADMIN, enforced in service) |
 | `PATCH /api/employees/{id}/status` | ADMIN, HR |
 | `DELETE /api/employees/{id}` → soft TERMINATE | ADMIN |
 | `GET /api/employees/dashboard/stats`, `/departments` | ADMIN, HR, MANAGER |
 | `GET /api/audit/**` | ADMIN |
+| `POST /api/auth/login`, `/register`, `/h2-console/**` (when enabled) | permitAll (h2 gated by `app.h2-console.enabled`) |
+
+Method-level `@PreAuthorize` + `SecurityFilterChain` URL rules.
 
 ## Employee Lifecycle
 
 Statuses: `ACTIVE`, `INACTIVE`, `ON_LEAVE`, `TERMINATED`
 
-- `validateStatusTransition` rejects any transition **from** `TERMINATED` (`Cannot change status of a terminated employee` / `already terminated`). All other transitions are allowed; frontend reflects backend truth.
-- `DELETE /api/employees/{id}` is **soft** — sets `employmentStatus=TERMINATED`, `updatedAt=now`, preserves row for audit history (verified in service).
+- `EmployeeService.validateStatusTransition` rejects any transition **from** `TERMINATED` (`Cannot change status of a terminated employee` / `already terminated`). Other transitions are allowed; frontend reflects backend truth.
+- `DELETE /api/employees/{id}` is soft — sets `employmentStatus=TERMINATED`, `updatedAt=now`, preserves row and audit history. Verified in service and tests. Frontend calls delete and shows terminated state.
 
 ## Audit Logging
 
-`AuditLog(actorId nullable, actorEmail, action, targetEntity, targetId nullable, description, ipAddress, timestamp)`. `action` = `AuditAction` enum. Failed logins use `actorId=null` / `targetId=null` to avoid NOT NULL violations. No passwords/JWTs in description.
+`AuditLog(actorId nullable, actorEmail, action, targetEntity, targetId nullable, description, ipAddress, timestamp)` with `AuditAction` enum: `LOGIN`, `FAILED_LOGIN`, `LOGOUT`, `CREATE_EMPLOYEE`, `UPDATE_EMPLOYEE`, `ACTIVATE_EMPLOYEE`, `DEACTIVATE_EMPLOYEE`, `TERMINATE_EMPLOYEE`, `CHANGE_ROLE`. Failed logins log with `actorId=null` / `targetId=null` to avoid NOT NULL violations. No passwords/JWTs stored. Admin-only access with filtering and pagination.
 
-## Validation & Error Handling
-
-Bean Validation on `Employee` (employeeId `^[A-Z0-9-]+$`, email `@Email`, phone `^[0-9]{10}$`, sizes) + `@Size(min=8)` on password (raw before BCrypt). `@JsonProperty(WRITE_ONLY)` on password, `toString()` excludes it.
-
-`GlobalExceptionHandler` → consistent `ErrorResponse{timestamp,status,error,message,path}`:
-
-- 400 validation/constraint/illegal arg
-- 401 `BadCredentialsException` → `Invalid email or password`
-- 403 `AccessDeniedException`
-- 409 `DataIntegrityViolationException` (duplicate employeeId/email)
-- 500 generic, no stack trace/SQL leak
-
-## Setup
-
-### Prerequisites
-
-Java 21, Node 20+, Maven wrapper included, Docker (optional), MySQL 8 if not using Docker.
-
-### Environment Variables
-
-Never commit `.env`. Use `.env.example` as template:
-
-```bash
-cp .env.example .env
-# edit .env: set strong MYSQL_ROOT_PASSWORD and JWT_SECRET (min 32 chars)
-```
-
-`.env.example`:
-```
-MYSQL_ROOT_PASSWORD=change-me-strong-password
-MYSQL_DATABASE=workforce_db
-DB_USERNAME=root
-JWT_SECRET=change-me-to-a-long-random-secret-min-32-chars-for-HS256
-JWT_EXPIRATION=86400000
-CORS_ALLOWED_ORIGINS=http://localhost:3000
-SPRING_PROFILES_ACTIVE=docker
-```
-
-Backend also reads `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `CORS_ALLOWED_ORIGINS` from env (see `application.properties` defaults marked `dev-only`). Production must override.
-
-Frontend: `user-frontend/.env.example` → `REACT_APP_API_URL=http://localhost:8082` (or Docker Nginx proxy `/api` → `http://backend:8082`).
-
-### Local Development (without Docker)
-
-Uses H2 file DB (`local` profile) — demo accounts seeded via `DevDataInitializer` (`@Profile("local")`, password `password123`, BCrypt-hashed, development only).
-
-```bash
-# Backend (local profile, H2 file, H2 console at /h2-console)
-cd userMgmt/userMgmt
-./mvnw spring-boot:run -Dspring-boot.run.profiles=local
-
-# Frontend (new shell)
-cd user-frontend
-npm install
-npm start
-# app: http://localhost:3000  api: http://localhost:8082
-```
-
-Default **development** accounts (local profile only, not production):
-
-| Role | Email | Password | Note |
-|------|-------|----------|------|
-| ADMIN | admin@company.com | password123 | dev-only |
-| HR | hr@company.com | password123 | dev-only |
-| MANAGER | manager@company.com | password123 | dev-only |
-| EMPLOYEE | employee@company.com | password123 | dev-only |
-
-### Docker (production-like)
-
-```bash
-cp .env.example .env
-# set real secrets in .env
-docker compose up -d --build
-# frontend: http://localhost:3000 (Nginx :80 → mapped 3000:80)
-# backend : http://localhost:8082
-# mysql   : 127.0.0.1:3307 → container 3306 (host-only, not LAN)
-# health: backend depends_on mysql (healthy), frontend depends_on backend (healthy)
-docker compose logs -f
-docker compose down -v   # remove volumes
-```
-
-Compose reads `.env`; backend receives `DB_URL/DB_PASSWORD/JWT_SECRET/CORS_ALLOWED_ORIGINS` from env. H2 console disabled (`app.h2-console.enabled=false`) in production.
-
-## Testing
-
-### Backend
-
-39 tests (verified 2026-08-27, all passing):
-
-- **Unit**: `EmployeeServiceTest` 15 — create/duplicate, update, status transitions (including terminated restrictions), role-change guard, dashboard counts
-- **Controller**: `AuthControllerTest` 4 — login/failed login (mock)
-- **Repository**: `EmployeeRepositoryDataTest` 6 — persistence, unique constraints (`employee_id`, `email`), status queries, department distribution
-- **API (REST Assured)**: `EmployeeApiTest` 13 — valid/invalid login, expired/invalid token (where practical), CRUD, status, duplicate email/id, dashboard
-- **App**: `UserMgmtApplicationTests` 1 — context loads
-
-```bash
-cd userMgmt/userMgmt
-./mvnw test
-# surefire reports: target/surefire-reports/
-```
-
-### Frontend
-
-```bash
-cd user-frontend
-npm test -- --watchAll=false
-# 1 suite (App.test.js), CRA default
-npm run build
-```
-
-### Cucumber + Selenium (BDD/E2E)
-
-4 features, 14 scenarios (business-oriented):
-
-- `login.feature` (2) — success / invalid credentials
-- `employee-management.feature` (4) — create, update, status change, terminate (soft)
-- `authorization.feature` (4) — ADMIN/HR/MANAGER/EMPLOYEE boundaries
-- `validation.feature` (4) — invalid email, duplicate email, missing fields, short password
-
-Runner: `automation/src/test/java/com/demo/automation/runners/RunCucumberTest.java` — JUnit Platform Suite, glue=`com.demo.automation.stepdefinitions`, `pretty, html:target/cucumber-report.html, json:target/cucumber-report.json` (separate property keys, verified no duplicate `PLUGIN_PROPERTY_NAME`). Reports under `automation/target/` (gitignored).
-
-Structure: `pages/` (LoginPage, EmployeePage, DashboardPage) lightweight POM; `stepdefinitions/` delegates to `CommonSteps` helpers with explicit `WebDriverWait`; `hooks/WebHooks` manages driver lifecycle + screenshots on failure. No `Thread.sleep`.
-
-Avoids execution-order dependencies: test data is generated per scenario where possible; `EMP-001` references exist but are created via API/UI preconditions where needed.
-
-Execution requires running backend (`local` profile, `DEFINED_PORT 8082`) and frontend (`3000`):
-
-```bash
-# Terminal 1: backend
-cd userMgmt/userMgmt && ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
-# Terminal 2: frontend
-cd user-frontend && npm start
-# Terminal 3: automation
-cd automation && ../userMgmt/userMgmt/mvnw test -Dtest=RunCucumberTest
-# Reports: automation/target/cucumber-report.html / .json
-```
-
-CI does not run Selenium (needs services); workflow validates compose config and runs backend/frontend builds.
-
-## CI/CD
-
-`.github/workflows/ci.yml` — on `push`/`pull_request`:
-
-1. `backend` job: Java 21, `./mvnw -B clean verify` (+ uploads surefire reports)
-2. `frontend` job: Node 20, `npm ci`, `npm test`, `npm run build`
-3. `docker` job: `docker compose config` validation (depends on both)
-
-No secrets in workflow; `maven`/`npm` caching enabled.
-
-## API Reference
+## REST API
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| POST | /api/auth/login | — | `{email,password}` → `{token, id, employeeId, email, fullName, role}`; also logs audit |
-| POST | /api/auth/register | — | creates Employee (default EMPLOYEE if role null) |
-| GET | /api/auth/me | JWT | current principal |
-| POST | /api/employees | ADMIN,HR | `Employee` body (password write-only) → 201 |
-| GET | /api/employees | ADMIN,HR,MANAGER | `?search=&department=&role=&status=&page=&size=&sortBy=&sortDir=` |
-| GET | /api/employees/{id} | ALL | EMPLOYEE only own id |
-| PUT | /api/employees/{id} | ADMIN,HR | full update, role change only ADMIN |
-| PATCH | /api/employees/{id}/status?status= | ADMIN,HR | see lifecycle |
-| DELETE | /api/employees/{id} | ADMIN | soft TERMINATE → 200 with updated entity |
-| GET | /api/employees/dashboard/stats | ADMIN,HR,MANAGER | totals + distribution + recent |
-| GET | /api/employees/departments | ADMIN,HR,MANAGER | string list |
-| GET | /api/audit | ADMIN | Page `?actorId=&action=&startDate=&endDate=&page=&size=` |
-| GET | /api/audit/stats | ADMIN | counts |
+| POST | `/api/auth/login` | — | `{email,password}` → `{token, id, employeeId, email, fullName, role}`; logs LOGIN/FAILED_LOGIN |
+| POST | `/api/auth/register` | — | creates Employee (defaults to EMPLOYEE if role null), hashes password |
+| GET | `/api/auth/me` | JWT | current principal |
+| POST | `/api/employees` | ADMIN,HR | `Employee` JSON (password write-only) → 201 |
+| GET | `/api/employees` | ADMIN,HR,MANAGER | `?search=&department=&role=&status=&page=&size=&sortBy=&sortDir=` |
+| GET | `/api/employees/{id}` | ALL | EMPLOYEE only own id |
+| PUT | `/api/employees/{id}` | ADMIN,HR | full update, role change only ADMIN |
+| PATCH | `/api/employees/{id}/status?status=` | ADMIN,HR | lifecycle validation |
+| DELETE | `/api/employees/{id}` | ADMIN | soft TERMINATE → 200 with entity |
+| GET | `/api/employees/dashboard/stats` | ADMIN,HR,MANAGER | totals by status, department distribution, recent hires |
+| GET | `/api/employees/departments` | ADMIN,HR,MANAGER | list of department names |
+| GET | `/api/audit` | ADMIN | `?actorId=&action=&startDate=&endDate=&page=&size=` |
+| GET | `/api/audit/stats` | ADMIN | counts |
 
-Error codes: 400 validation/bad request, 401 unauthenticated, 403 forbidden, 404 not found, 409 conflict (duplicate), 500 internal (no stack trace).
+Error format (`GlobalExceptionHandler`): `{timestamp, status, error, message, path}` — 400 validation/bad request, 401 unauthenticated, 403 forbidden, 404 not found, 409 conflict (duplicate), 500 internal (no stack trace/SQL).
+
+## Database
+
+`employees`:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | BIGINT | PK, IDENTITY |
+| employee_id | VARCHAR(20) | UK, NOT NULL, pattern `^[A-Z0-9-]+$` |
+| full_name | VARCHAR(100) | NOT NULL |
+| email | VARCHAR(150) | UK, NOT NULL, `@Email` |
+| password | VARCHAR(255) | NOT NULL, BCrypt, WRITE_ONLY |
+| phone | VARCHAR(15) | `^[0-9]{10}$` |
+| department | VARCHAR(100) | NOT NULL |
+| designation | VARCHAR(100) | NOT NULL |
+| role | VARCHAR(20) | NOT NULL, enum |
+| joining_date | DATE | NOT NULL |
+| employment_status | VARCHAR(20) | NOT NULL, enum |
+| created_at | TIMESTAMP | NOT NULL, updatable=false |
+| updated_at | TIMESTAMP | nullable |
+
+`audit_logs`: `id PK, actor_id nullable, actor_email NOT NULL, action NOT NULL, target_entity, target_id nullable, description TEXT, timestamp NOT NULL, ip_address`.
+
+MySQL 8 in Docker (`workforce_db`), H2 file (`local` profile, `./data/workforce_db`) and H2 mem (`test` profile, `create-drop`). `ddl-auto=update` (dev) / `create-drop` (test).
+
+## Testing Strategy
+
+### Unit Testing
+`src/test/java/com/demo/service/EmployeeServiceTest` — 15 tests: create, duplicate employeeId/email, update, status transitions including terminated restrictions, role-change guard (only ADMIN), dashboard counts. `AuthControllerTest` — 4 tests (mocked). `UserMgmtApplicationTests` — 1 context load. Run: `cd userMgmt/userMgmt && ./mvnw test` (39 total with integration, see below) — `target/surefire-reports/`.
+
+### API Testing
+REST Assured (`io.rest-assured:rest-assured:5.4.0` in `userMgmt` and `automation`): `src/test/java/com/demo/api/EmployeeApiTest` — 13 tests: valid login, invalid login, create, retrieve, update, status change, validation failure, duplicate employee, duplicate email, authorization (admin/hr/manager/employee boundaries), dashboard. Executed as part of `mvn test`.
+
+### BDD with Cucumber
+4 features, 14 scenarios in `automation/src/test/resources/features`:
+- `login.feature` (2): successful login, invalid login
+- `employee-management.feature` (4): create, update, status change, terminate (soft)
+- `authorization.feature` (4): ADMIN/HR/MANAGER/EMPLOYEE access boundaries
+- `validation.feature` (4): invalid email, duplicate email, missing fields, short password
+
+Runner: `automation/src/test/java/com/demo/automation/runners/RunCucumberTest.java` — JUnit Platform Suite, `glue=com.demo.automation.stepdefinitions`, `pretty, html:target/cucumber-report.html, json:target/cucumber-report.json` (separate property keys, verified). Reports in `automation/target/` (gitignored).
+
+### UI Automation with Selenium
+Selenium 4.18 + WebDriverManager 5.8, Chrome headless. Lightweight POM: `automation/src/test/java/com/demo/automation/pages/{LoginPage,EmployeePage,DashboardPage}`. Step definitions delegate to `CommonSteps` helpers with explicit `WebDriverWait(10s)`, no `Thread.sleep`. `hooks/WebHooks` manages driver lifecycle and screenshots on failure. Business-oriented scenarios, no ordering dependencies.
+
+### Database Validation
+`src/test/java/com/demo/repository/EmployeeRepositoryDataTest` — 6 tests: persistence with timestamps, unique `employee_id`, unique `email`, case-exact lookups, status queries, department distribution. Uses `@DataJpaTest @ActiveProfiles("test")` with H2 mem.
+
+## Docker
+
+Stack: Frontend (Nginx) → Backend (8082) → MySQL (3306)
+
+- `userMgmt/userMgmt/Dockerfile`: multi-stage `maven:3.9-eclipse-temurin-21` build → `eclipse-temurin:21-jre`
+- `user-frontend/Dockerfile`: `node:20-alpine` build → `nginx:alpine` with `nginx.conf` (SPA fallback + `/api` proxy to `http://backend:8082`)
+- `docker-compose.yml`: env-driven (`${MYSQL_ROOT_PASSWORD:-change-me}`, `${JWT_SECRET:-dev-only-change-me}`, etc.), `127.0.0.1:3307:3306` host bind, `mysql-data` volume, healthcheck `mysqladmin ping` + backend `curl /api/auth/login`, `depends_on: condition: service_healthy`, `restart: unless-stopped`. H2 console disabled in production (`app.h2-console.enabled=false`).
 
 ## Project Structure
 
@@ -256,37 +165,149 @@ user-management-system/
 │   └── Dockerfile
 ├── user-frontend/             # React 18
 │   ├── src/{pages,context,services,layout}
-│   ├── nginx.conf             # SPA fallback + /api proxy → backend:8082
-│   └── Dockerfile (multi-stage, nginx:alpine)
+│   ├── nginx.conf
+│   └── Dockerfile
 ├── automation/                # Cucumber + Selenium
 │   ├── src/test/java/com/demo/automation/{runners,stepdefinitions,pages,hooks,config}
 │   ├── src/test/resources/features/{login,employee-management,authorization,validation}.feature
-│   └── pom.xml                # inherits backend parent
-├── .github/workflows/ci.yml
-├── docker-compose.yml         # env-driven, healthchecks, 127.0.0.1 mysql bind, 3000:80 frontend
+│   └── pom.xml
+├── docker-compose.yml
 ├── .env.example
 └── .gitignore
 ```
 
+## Environment Configuration
+
+Never commit `.env`. Template:
+
+```bash
+cp .env.example .env
+# edit .env: set strong MYSQL_ROOT_PASSWORD and JWT_SECRET (min 32 chars random in production)
+```
+
+`.env.example`:
+```
+MYSQL_ROOT_PASSWORD=change-me
+MYSQL_DATABASE=workforce_db
+DB_USERNAME=root
+DB_URL=jdbc:mysql://mysql-container:3306/workforce_db
+JWT_SECRET=dev-only-change-me
+JWT_EXPIRATION=86400000
+CORS_ALLOWED_ORIGINS=http://localhost:3000
+SPRING_PROFILES_ACTIVE=docker
+```
+
+Backend reads `DB_URL/DB_USERNAME/DB_PASSWORD/JWT_SECRET/JWT_EXPIRATION/CORS_ALLOWED_ORIGINS` via `${VAR:dev-only-change-me}` (dev placeholder, production must override). Frontend `user-frontend/.env.example`: `REACT_APP_API_URL=http://localhost:8082`.
+
+## Running the Application
+
+### Prerequisites
+Java 21, Node 20+, Maven wrapper, Docker (optional)
+
+### Local (H2 file, no Docker)
+
+```bash
+# Backend - local profile seeds dev users (profile-gated DevDataInitializer)
+cd userMgmt/userMgmt
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+# http://localhost:8082, H2 console http://localhost:8082/h2-console (local only)
+
+# Frontend - new shell
+cd user-frontend
+npm install
+npm start
+# http://localhost:3000
+```
+
+Dev accounts (local profile only, BCrypt `password123`):
+- ADMIN `admin@company.com`
+- HR `hr@company.com`
+- MANAGER `manager@company.com`
+- EMPLOYEE `employee@company.com`
+
+Documented as dev-only, not production.
+
+### Docker (MySQL)
+
+```bash
+cp .env.example .env
+# set real secrets in .env
+docker compose up -d --build
+# frontend http://localhost:3000 (Nginx 80 -> 3000:80)
+# backend  http://localhost:8082
+# mysql    127.0.0.1:3307 -> 3306
+docker compose logs -f
+docker compose down -v
+```
+
+## Running Tests
+
+```bash
+# Backend unit + API + DB (39 tests)
+cd userMgmt/userMgmt
+./mvnw test
+# Reports: target/surefire-reports/
+
+# Frontend
+cd user-frontend
+npm test -- --watchAll=false
+npm run build
+```
+
+## Running Automation Tests
+
+Requires backend (`local` profile, 8082) and frontend (3000) running:
+
+```bash
+# Terminal 1: backend
+cd userMgmt/userMgmt && ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+# Terminal 2: frontend
+cd user-frontend && npm start
+# Terminal 3: automation
+cd automation && ../userMgmt/userMgmt/mvnw test -Dtest=RunCucumberTest
+# Reports: automation/target/cucumber-report.html, automation/target/cucumber-report.json
+```
+
+Automation uses explicit waits, no `Thread.sleep`, repeatable via generated data where possible (EMP-001 is demo seed, otherwise created per scenario).
+
+## Screenshots
+
+Screenshots are not committed; they can be added under `docs/screenshots/` for:
+
+- Login
+- Dashboard (totals, department distribution, recent hires)
+- Employee list (search/filter/pagination)
+- Employee details (status change, terminate)
+- Audit logs (admin view)
+
+WebDriver captures screenshots on failure via `WebHooks` (attached to Cucumber scenario).
+
 ## Technical Decisions
 
-| Decision | Why | Trade-off |
-|----------|-----|-----------|
-| JWT stateless HS256 | Simple, scalable, no session store | No revocation without blocklist; 24h expiry acceptable for demo (prod should use short-lived + refresh) |
-| BCrypt | Spring Security default | Sufficient; slower than Argon2 but native |
-| Soft TERMINATE | Preserves audit history, meets spec | Employees remain queryable (filtered by status) |
-| H2 local/test, MySQL prod | Fast tests, persistent local file DB | `ddl-auto=update` is dev convenience, prod should use migrations |
-| POM in automation + runtime H2 | Keeps H2 out of production jar; tests still run | `runtime` H2 still in jar? Better `local` profile exclusion future |
-| Explicit waits, no sleep | Reliable Selenium | Slightly more verbose |
-| Context API vs Redux | Auth state only | Simpler for this scope |
+| Decision | Rationale | Trade-off |
+|----------|-----------|-----------|
+| JWT HS256 stateless | Simple, scalable, no session store | No revocation without blocklist; 24h expiry okay for demo (prod: short-lived + refresh) |
+| BCrypt | Spring Security native | Sufficient vs Argon2 |
+| Soft TERMINATE | Preserves audit history | Rows remain queryable (filtered by status) |
+| H2 local/test, MySQL prod | Fast tests, persistent local file | `ddl-auto=update` dev convenience; prod should use migrations |
+| H2 scope runtime, local profile | Keeps H2 out of prod jar semantics while allowing local | Still in jar; future: exclude via profile |
+| POM in automation | Lightweight, explicit waits | More verbose than sleep |
+| Context API vs Redux | Auth state only | Simpler |
 
-## Troubleshooting
+## Known Limitations
 
-- `Duplicate step definitions` → ensure `CommonSteps` helpers are not annotated where `LoginSteps`/`AuthorizationSteps` own the phrase.
-- Backend `401` on `/api/employees` → check `Authorization: Bearer <jwt>` and `JWT_SECRET` consistency.
-- MySQL `not healthy` in compose → wait 30s; check `MYSQL_ROOT_PASSWORD` in `.env`.
-- Cucumber not finding backend → run backend with `-Dspring-boot.run.profiles=local` and frontend on 3000 first.
+- `getClientIp()` returns `127.0.0.1` (placeholder; production should use `X-Forwarded-For`).
+- `JwtUtil` derives 32-byte key via SHA-256 for short dev placeholders; production must use long random secret.
+- `DDL auto update` not migrations; `RecentEmployees` uses `Pageable.unpaged` then limit.
+- Automation assumes Chrome available; Selenium tests require running frontend/backend (not self-contained).
+- No rate limiting, no OpenAPI docs.
 
-## License
+## Future Improvements
 
-MIT
+- Email notifications on status changes
+- Bulk import (CSV)
+- Organization hierarchy (departments → teams)
+- Advanced audit search (date ranges, actor filters)
+- API rate limiting
+- OpenAPI/Swagger
+- Kubernetes manifests (removed CI scope for now)

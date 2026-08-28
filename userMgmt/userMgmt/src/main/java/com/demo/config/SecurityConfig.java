@@ -35,7 +35,7 @@ public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    @Autowired
+    @Autowired(required = false)
     private DebugSecurityContextFilter debugSecurityContextFilter;
 
     @Value("${app.cors.allowed-origins:http://localhost:3000}")
@@ -72,8 +72,10 @@ public class SecurityConfig {
                 })
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(debugSecurityContextFilter, JwtAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+        if (debugSecurityContextFilter != null) {
+            http.addFilterAfter(debugSecurityContextFilter, JwtAuthenticationFilter.class);
+        }
 
         if (h2ConsoleEnabled) {
             // H2 console renders inside frames; required only when the console is exposed

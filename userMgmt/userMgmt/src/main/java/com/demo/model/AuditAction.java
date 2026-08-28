@@ -1,0 +1,14 @@
+package com.demo.model;
+
+public enum AuditAction {
+    LOGIN,
+    LOGOUT,
+    CREATE_EMPLOYEE,
+    UPDATE_EMPLOYEE,
+    ACTIVATE_EMPLOYEE,
+    DEACTIVATE_EMPLOYEE,
+    CHANGE_ROLE,
+    TERMINATE_EMPLOYEE,
+    FAILED_LOGIN,
+    VIEW_AUDIT_LOGS
+}

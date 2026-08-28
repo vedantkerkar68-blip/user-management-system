@@ -18,7 +18,7 @@ import java.util.function.Function;
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.secret:dev-only-please-override-in-production-use-long-random-secret-min-32-chars}")
+    @Value("${jwt.secret:dev-only-please-override-in-production-use-long-random-secret-min-32-chars}") // pragma: allowlist secret - dev placeholder only
     private String secret;
 
     @Value("${jwt.expiration:86400000}")
